@@ -1,0 +1,18 @@
+{
+  "name": "tempermonkey-cli",
+  "version": "2.0.0",
+  "description": "手元の Tampermonkey ユーザースクリプトを file:// 経由でホットリロード開発するための CLI",
+  "type": "module",
+  "bin": {
+    "tm": "./cli.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": ["tampermonkey", "userscript", "cli"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/m-mahiro/tempermonkey-cli.git"
+  }
+}
