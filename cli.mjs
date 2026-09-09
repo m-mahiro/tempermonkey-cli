@@ -18,7 +18,7 @@
  */
 
 import { spawn }                      from 'child_process';
-import { readFileSync, mkdirSync, writeFileSync } from 'fs';
+import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'fs';
 import { resolve, basename, join }    from 'path';
 import { pathToFileURL }              from 'url';
 import { tmpdir }                     from 'os';
@@ -69,13 +69,44 @@ function writeStub(name, content) {
   return stubPath;
 }
 
-/** 指定URLを既定のブラウザで開く（OSごとに手段を切り替え） */
+// Windows でよく使われる Chromium 系ブラウザの既定インストール先
+const WIN_BROWSER_CANDIDATES = [
+  [process.env.ProgramFiles,          'Google\\Chrome\\Application\\chrome.exe'],
+  [process.env['ProgramFiles(x86)'],  'Google\\Chrome\\Application\\chrome.exe'],
+  [process.env.LOCALAPPDATA,          'Google\\Chrome\\Application\\chrome.exe'],
+  [process.env.ProgramFiles,          'Microsoft\\Edge\\Application\\msedge.exe'],
+  [process.env['ProgramFiles(x86)'],  'Microsoft\\Edge\\Application\\msedge.exe'],
+];
+
+function findWindowsBrowser() {
+  for (const [base, rel] of WIN_BROWSER_CANDIDATES) {
+    if (!base) continue;
+    const path = join(base, rel);
+    if (existsSync(path)) return path;
+  }
+  return null;
+}
+
+/**
+ * 指定URLをブラウザで開く。
+ *
+ * Windows では `.user.js` にファイル関連付けがなく、`chrome-extension://` も
+ * OSレベルのプロトコルハンドラーとして登録されていないため、`start` に
+ * URLを渡すだけでは「開けるアプリがありません」という警告になる。
+ * ブラウザの実行ファイルへ直接URLを渡すことでOSの関連付け解決を迂回する。
+ */
 function openInBrowser(url) {
   const opts = { detached: true, stdio: 'ignore' };
   let child;
   if (process.platform === 'win32') {
-    // `start` はコマンド解釈上、第一引数をウィンドウタイトルとして扱うため空文字を挟む
-    child = spawn('cmd', ['/c', 'start', '""', url], opts);
+    const browser = findWindowsBrowser();
+    if (browser) {
+      child = spawn(browser, [url], opts);
+    } else {
+      console.error('⚠️  Chrome / Edge が既定の場所に見つかりませんでした。手動でブラウザを開いて上記URLにアクセスしてください。');
+      // `start` はコマンド解釈上、第一引数をウィンドウタイトルとして扱うため空文字を挟む
+      child = spawn('cmd', ['/c', 'start', '""', url], opts);
+    }
   } else if (process.platform === 'darwin') {
     child = spawn('open', [url], opts);
   } else {
