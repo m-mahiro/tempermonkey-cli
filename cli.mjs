@@ -5,6 +5,7 @@
  *
  * コマンド:
  *   tm install <file...>   指定した .user.js をインストール導線に乗せる（ワイルドカード可）
+ *   tm pull [--dry-run]    上流を pull し、新規／メタデータ変更のあった .user.js だけインストールする
  *   tm list                Tampermonkey の管理画面をブラウザで開く
  *
  * 仕組み:
@@ -17,7 +18,7 @@
  *   Tampermonkey 拡張の設定で「ファイル URL へのアクセスを許可」を有効化しておくこと。
  */
 
-import { spawn }                      from 'child_process';
+import { spawn, spawnSync }           from 'child_process';
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'fs';
 import { resolve, basename, join }    from 'path';
 import { pathToFileURL }              from 'url';
@@ -115,6 +116,76 @@ function openInBrowser(url) {
   child.unref();
 }
 
+// ── インストール ─────────────────────────────────────────────────────────────
+
+/** 各ファイルのスタブを生成してブラウザで開く。失敗した件数を返す。 */
+function installFiles(paths) {
+  let failed = 0;
+  for (const filePath of paths) {
+    const absPath = resolve(filePath);
+
+    let src;
+    try {
+      src = readFileSync(absPath, 'utf8');
+    } catch {
+      console.error(`❌ 読み込み失敗: ${filePath}`);
+      failed++;
+      continue;
+    }
+
+    const metaBlock = extractMetaBlock(src);
+    if (!metaBlock) {
+      console.error(`❌ UserScript メタデータブロックが見つかりません: ${filePath}`);
+      failed++;
+      continue;
+    }
+
+    const name     = getMetaValue(metaBlock, 'name') ?? basename(absPath, '.user.js');
+    const stub     = buildStub(absPath, metaBlock);
+    const stubPath = writeStub(name, stub);
+    const stubUrl  = pathToFileURL(stubPath).href;
+
+    console.log(`📦 ${name}`);
+    console.log(`   ${stubUrl}`);
+    openInBrowser(stubUrl);
+  }
+  return failed;
+}
+
+// ── git 連携（tm pull） ───────────────────────────────────────────────────────
+
+// TM に登録済みのスタブへ焼き付き、変更したら再インストールが要るキー
+const REINSTALL_KEYS = new Set([
+  'name', 'namespace', 'match', 'include', 'exclude', 'grant',
+  'run-at', 'noframes', 'connect', 'sandbox', 'require', 'resource',
+]);
+
+/** 再インストールが要るキーだけを抜き出し、`key value` の並べ替え済み配列にする */
+function reinstallSignature(metaBlock) {
+  const lines = [];
+  for (const m of metaBlock.matchAll(/^\/\/\s*@([\w-]+)\s*(.*)$/gm)) {
+    if (REINSTALL_KEYS.has(m[1])) lines.push(`${m[1]} ${m[2].trim().replace(/\s+/g, ' ')}`);
+  }
+  return lines.sort();
+}
+
+/** 2つのメタデータブロックで、再インストールが要るキーの差分を返す（変更されたキー名の配列） */
+function changedReinstallKeys(oldBlock, newBlock) {
+  const oldSig = reinstallSignature(oldBlock);
+  const newSig = reinstallSignature(newBlock);
+  const keys = new Set();
+  for (const line of oldSig.filter(l => !newSig.includes(l))) keys.add(line.split(' ')[0]);
+  for (const line of newSig.filter(l => !oldSig.includes(l))) keys.add(line.split(' ')[0]);
+  return [...keys];
+}
+
+function git(cwd, args) {
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  if (r.error) throw new Error(`git を実行できません: ${r.error.message}`);
+  if (r.status !== 0) throw new Error(`git ${args.join(' ')} が失敗しました\n${(r.stderr || '').trim()}`);
+  return r.stdout;
+}
+
 // ── コマンド実装 ─────────────────────────────────────────────────────────────
 
 const commands = {
@@ -130,38 +201,66 @@ const commands = {
       console.error('  例: tm install src/*.user.js');
       process.exit(1);
     }
+    if (installFiles(args)) process.exit(1);
+  },
 
-    let failed = 0;
-    for (const filePath of args) {
-      const absPath = resolve(filePath);
+  /**
+   * tm pull [--dry-run]
+   * 上流の変更を確認し、新規／メタデータ変更のあった .user.js だけを pull 後にインストールする。
+   */
+  async pull(args) {
+    const dryRun = args.includes('--dry-run');
+    const root   = git(process.cwd(), ['rev-parse', '--show-toplevel']).trim();
 
-      let src;
-      try {
-        src = readFileSync(absPath, 'utf8');
-      } catch {
-        console.error(`❌ 読み込み失敗: ${filePath}`);
-        failed++;
-        continue;
-      }
-
-      const metaBlock = extractMetaBlock(src);
-      if (!metaBlock) {
-        console.error(`❌ UserScript メタデータブロックが見つかりません: ${filePath}`);
-        failed++;
-        continue;
-      }
-
-      const name     = getMetaValue(metaBlock, 'name') ?? basename(absPath, '.user.js');
-      const stub     = buildStub(absPath, metaBlock);
-      const stubPath = writeStub(name, stub);
-      const stubUrl  = pathToFileURL(stubPath).href;
-
-      console.log(`📦 ${name}`);
-      console.log(`   ${stubUrl}`);
-      openInBrowser(stubUrl);
+    git(root, ['fetch']);
+    try {
+      git(root, ['rev-parse', '--abbrev-ref', '@{u}']);
+    } catch {
+      throw new Error('上流ブランチが設定されていません（git branch --set-upstream-to で設定してください）');
     }
 
-    if (failed) process.exit(1);
+    const base    = git(root, ['merge-base', 'HEAD', '@{u}']).trim();
+    const changes = git(root, ['diff', '--name-status', '--no-renames', base, '@{u}', '--', '*.user.js'])
+      .split('\n').filter(Boolean).map(l => l.split('\t'));
+
+    if (!changes.length) {
+      console.log('上流に .user.js の変更はありません');
+      if (!dryRun) git(root, ['pull', '--ff-only']);
+      return;
+    }
+
+    const toInstall = [];
+    const deleted   = [];
+    console.log(`上流に変更あり: ${changes.length} ファイル`);
+    for (const [status, path] of changes) {
+      if (status === 'A') {
+        console.log(`  新規      ${path}`);
+        toInstall.push(path);
+      } else if (status === 'D') {
+        console.log(`  削除      ${path}`);
+        deleted.push(path);
+      } else {
+        const oldBlock = extractMetaBlock(git(root, ['show', `${base}:${path}`])) ?? '';
+        const newBlock = extractMetaBlock(git(root, ['show', `@{u}:${path}`])) ?? '';
+        const keys     = changedReinstallKeys(oldBlock, newBlock);
+        if (keys.length) {
+          console.log(`  メタ変更  ${path}   (@${keys.join(', @')})`);
+          toInstall.push(path);
+        } else {
+          console.log(`  本体のみ  ${path}   （再インストール不要）`);
+        }
+      }
+    }
+    if (deleted.length) {
+      console.log('\n削除されたスクリプトは TM の管理画面から手動で削除してください（tm list で開けます）');
+    }
+
+    if (dryRun) return;
+
+    console.log('\ngit pull --ff-only');
+    git(root, ['pull', '--ff-only']);
+
+    if (toInstall.length && installFiles(toInstall.map(p => resolve(root, p)))) process.exit(1);
   },
 
   /**
@@ -185,6 +284,7 @@ tm — Tampermonkey ユーザースクリプト インストール CLI
 
 使い方:
   tm install <file...>   指定した .user.js をインストール導線に乗せる（ワイルドカード可）
+  tm pull [--dry-run]     上流を pull し、新規／メタデータ変更のあった .user.js だけインストールする
   tm list                 Tampermonkey の管理画面をブラウザで開く
 
 オプション:
@@ -205,7 +305,12 @@ tm — Tampermonkey ユーザースクリプト インストール CLI
     process.exit(1);
   }
 
-  await handler(args);
+  try {
+    await handler(args);
+  } catch (e) {
+    console.error(`❌ ${e.message}`);
+    process.exit(1);
+  }
 }
 
 main();

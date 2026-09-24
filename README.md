@@ -16,8 +16,13 @@ Tampermonkeyの拡張機能設定で「ファイルURLへのアクセスを許�
 
 ```bash
 tm install <file...>   # 指定した .user.js をインストール導線に乗せる（ワイルドカード可）
+tm pull [--dry-run]    # 上流をpullし、新規／メタデータ変更のあった.user.jsだけインストールする
 tm list                # Tampermonkeyの管理画面をブラウザで開く
 ```
+
+`tm pull` は`userscripts`のようなリポジトリ内で`git pull`の代わりに使う。`--dry-run`でpullせず、何が入れ直し対象かだけを見られる。再インストールが要るのは新規ファイルと、次のキーが変わったファイルのみ（`@version`や`@description`だけの変更、本体のみの変更では要らない）。削除されたスクリプトは`tm`では消せないので、一覧に出た名前をTMの管理画面から手動で削除する。
+
+対象キー: `@name` `@namespace` `@match` `@include` `@exclude` `@grant` `@run-at` `@noframes` `@connect` `@sandbox` `@require` `@resource`
 
 ```bash
 tm install src/foo.user.js     # 1本だけ
