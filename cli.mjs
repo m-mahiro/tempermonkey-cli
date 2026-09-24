@@ -4,8 +4,8 @@
  * https://github.com/m-mahiro/tempermonkey-cli
  *
  * コマンド:
- *   tm install <file...>   指定した .user.js をインストール導線に乗せる（ワイルドカード可）
- *   tm pull [--dry-run]    上流を pull し、新規／メタデータ変更のあった .user.js だけインストールする
+ *   tm install [--dev] <file...>   指定した .user.js をインストール導線に乗せる（ワイルドカード可）
+ *   tm pull [--dry-run] [--dev]    上流を pull し、新規／メタデータ変更のあった .user.js だけインストールする
  *   tm list                Tampermonkey の管理画面をブラウザで開く
  *
  * 仕組み:
@@ -21,13 +21,17 @@
 import { spawn, spawnSync }           from 'child_process';
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'fs';
 import { resolve, basename, join }    from 'path';
-import { pathToFileURL }              from 'url';
+import { pathToFileURL, fileURLToPath } from 'url';
 import { tmpdir }                     from 'os';
 
 // Tampermonkey（Chrome ウェブストア版）の固定拡張ID
 const TM_DASHBOARD_URL = 'chrome-extension://dhdgffkkebhmkfjojejmpbldmpobfkfo/options.html#nav=tabs';
 
 const STUB_DIR = join(tmpdir(), 'tempermonkey-cli-stubs');
+
+// --dev 時にスタブへ足す、`globalThis.__TM_DEV__ = true` だけのファイル。
+// ページを開くたびに読まれるため、掃除される一時ディレクトリではなくここに置く。
+const DEV_FLAG_PATH = fileURLToPath(new URL('./dev-flag.js', import.meta.url));
 
 // ── ユーティリティ ────────────────────────────────────────────────────────────
 
@@ -54,16 +58,22 @@ function safeFileName(name) {
  * 実体ファイルへの @require を1行差し込む。
  * ただし @updateURL / @downloadURL は除く。残すと TM の自動更新が
  * スタブをリモートのファイルで上書きし、@require file:// が消えてしまうため。
+ * dev のときは、実体ファイルより前に開発フラグ用ファイルを @require する
+ * （@require は書かれた順に実行されるので、実体側で __TM_DEV__ を参照できる）。
  */
-function buildStub(absPath, metaBlock) {
-  const requireUrl = pathToFileURL(absPath).href;
+function buildStub(absPath, metaBlock, dev = false) {
+  const requireUrls = [];
+  if (dev) requireUrls.push(pathToFileURL(DEV_FLAG_PATH).href);
+  requireUrls.push(pathToFileURL(absPath).href);
+  const requireLines = requireUrls.map(u => `// @require     ${u}`).join('\n');
+
   const withoutUpdateUrls = metaBlock.replace(
     /^[ \t]*\/\/\s*@(?:updateURL|downloadURL)\b.*(?:\r?\n)?/gm,
     ''
   );
   const injected = withoutUpdateUrls.replace(
     /\/\/ ==\/UserScript==/,
-    `// @require     ${requireUrl}\n// ==/UserScript==`
+    () => `${requireLines}\n// ==/UserScript==`
   );
   return injected + '\n';
 }
@@ -125,7 +135,7 @@ function openInBrowser(url) {
 // ── インストール ─────────────────────────────────────────────────────────────
 
 /** 各ファイルのスタブを生成してブラウザで開く。失敗した件数を返す。 */
-function installFiles(paths) {
+function installFiles(paths, { dev = false } = {}) {
   let failed = 0;
   for (const filePath of paths) {
     const absPath = resolve(filePath);
@@ -147,11 +157,11 @@ function installFiles(paths) {
     }
 
     const name     = getMetaValue(metaBlock, 'name') ?? basename(absPath, '.user.js');
-    const stub     = buildStub(absPath, metaBlock);
+    const stub     = buildStub(absPath, metaBlock, dev);
     const stubPath = writeStub(name, stub);
     const stubUrl  = pathToFileURL(stubPath).href;
 
-    console.log(`📦 ${name}`);
+    console.log(`📦 ${name}${dev ? ' (dev)' : ''}`);
     console.log(`   ${stubUrl}`);
     openInBrowser(stubUrl);
   }
@@ -201,13 +211,15 @@ const commands = {
    * 各ファイルについてインストーラースタブを生成し、ブラウザで開く。
    */
   async install(args) {
-    if (!args.length) {
-      console.error('使い方: tm install <file...>');
+    const dev   = args.includes('--dev');
+    const files = args.filter(a => a !== '--dev');
+    if (!files.length) {
+      console.error('使い方: tm install [--dev] <file...>');
       console.error('  例: tm install src/foo.user.js');
-      console.error('  例: tm install src/*.user.js');
+      console.error('  例: tm install --dev src/*.user.js');
       process.exit(1);
     }
-    if (installFiles(args)) process.exit(1);
+    if (installFiles(files, { dev })) process.exit(1);
   },
 
   /**
@@ -216,6 +228,7 @@ const commands = {
    */
   async pull(args) {
     const dryRun = args.includes('--dry-run');
+    const dev    = args.includes('--dev');
     const root   = git(process.cwd(), ['rev-parse', '--show-toplevel']).trim();
 
     git(root, ['fetch']);
@@ -266,7 +279,7 @@ const commands = {
     console.log('\ngit pull --ff-only');
     git(root, ['pull', '--ff-only']);
 
-    if (toInstall.length && installFiles(toInstall.map(p => resolve(root, p)))) process.exit(1);
+    if (toInstall.length && installFiles(toInstall.map(p => resolve(root, p)), { dev })) process.exit(1);
   },
 
   /**
@@ -289,11 +302,12 @@ async function main() {
 tm — Tampermonkey ユーザースクリプト インストール CLI
 
 使い方:
-  tm install <file...>   指定した .user.js をインストール導線に乗せる（ワイルドカード可）
-  tm pull [--dry-run]     上流を pull し、新規／メタデータ変更のあった .user.js だけインストールする
-  tm list                 Tampermonkey の管理画面をブラウザで開く
+  tm install [--dev] <file...>   指定した .user.js をインストール導線に乗せる（ワイルドカード可）
+  tm pull [--dry-run] [--dev]     上流を pull し、新規／メタデータ変更のあった .user.js だけインストールする
+  tm list                         Tampermonkey の管理画面をブラウザで開く
 
 オプション:
+  --dev                   開発用フラグ付きでインストールする（スクリプト側で globalThis.__TM_DEV__ が true になる）
   -h, --help              このヘルプを表示
 
 前提条件:
