@@ -50,12 +50,18 @@ function safeFileName(name) {
 
 /**
  * インストーラースタブの内容を生成する。
- * 元のメタデータブロックはそのまま維持し、`==/UserScript==` の直前に
+ * 元のメタデータブロックを維持し、`==/UserScript==` の直前に
  * 実体ファイルへの @require を1行差し込む。
+ * ただし @updateURL / @downloadURL は除く。残すと TM の自動更新が
+ * スタブをリモートのファイルで上書きし、@require file:// が消えてしまうため。
  */
 function buildStub(absPath, metaBlock) {
   const requireUrl = pathToFileURL(absPath).href;
-  const injected = metaBlock.replace(
+  const withoutUpdateUrls = metaBlock.replace(
+    /^[ \t]*\/\/\s*@(?:updateURL|downloadURL)\b.*(?:\r?\n)?/gm,
+    ''
+  );
+  const injected = withoutUpdateUrls.replace(
     /\/\/ ==\/UserScript==/,
     `// @require     ${requireUrl}\n// ==/UserScript==`
   );
