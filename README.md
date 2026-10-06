@@ -1,4 +1,4 @@
-# tempermonkey-cli
+# tampermonkey-cli
 
 手元のTampermonkeyユーザースクリプトを、`file://`によるホットリロードでインストールするためのCLI（`tm`コマンド）。個人用。
 
@@ -44,7 +44,7 @@ const DEV_MODE = globalThis.__TM_DEV__ ?? false;
 
 `tm install --dev`は、元ファイルの前に`globalThis.__TM_DEV__ = true`だけを実行する[dev-flag.js](dev-flag.js)を`@require`したスタブを作る。元ファイルは書き換えないので、`--dev`でも保存即反映は変わらない。`--dev`なしで入れ直せば本番（`DEV_MODE = false`）に戻る。`tm pull --dev`でも使える。
 
-`dev-flag.js`は、ページを開くたびにTMが読みに行く。移動・削除すると`--dev`で入れたスクリプトが読み込みに失敗するので、`tempermonkey-cli`を動かしたら`npm link`とあわせて`--dev`のスクリプトも入れ直すこと。
+`dev-flag.js`は、ページを開くたびにTMが読みに行く。移動・削除すると`--dev`で入れたスクリプトが読み込みに失敗するので、`tampermonkey-cli`を動かしたら`npm link`とあわせて`--dev`のスクリプトも入れ直すこと。
 
 ## 持っていない機能とその理由
 

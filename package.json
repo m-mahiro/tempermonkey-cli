@@ -1,5 +1,5 @@
 {
-  "name": "tempermonkey-cli",
+  "name": "tampermonkey-cli",
   "version": "2.0.0",
   "description": "手元の Tampermonkey ユーザースクリプトを file:// 経由でホットリロード開発するための CLI",
   "type": "module",
@@ -13,6 +13,6 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/m-mahiro/tempermonkey-cli.git"
+    "url": "https://github.com/m-mahiro/tampermonkey-cli.git"
   }
 }
