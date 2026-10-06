@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * tm — Tampermonkey ユーザースクリプト インストール CLI
- * https://github.com/m-mahiro/tempermonkey-cli
+ * https://github.com/m-mahiro/tampermonkey-cli
  *
  * コマンド:
  *   tm install [--dev] <file...>   指定した .user.js をインストール導線に乗せる（ワイルドカード可）
@@ -27,7 +27,7 @@ import { tmpdir }                     from 'os';
 // Tampermonkey（Chrome ウェブストア版）の固定拡張ID
 const TM_DASHBOARD_URL = 'chrome-extension://dhdgffkkebhmkfjojejmpbldmpobfkfo/options.html#nav=tabs';
 
-const STUB_DIR = join(tmpdir(), 'tempermonkey-cli-stubs');
+const STUB_DIR = join(tmpdir(), 'tampermonkey-cli-stubs');
 
 // --dev 時にスタブへ足す、`globalThis.__TM_DEV__ = true` だけのファイル。
 // ページを開くたびに読まれるため、掃除される一時ディレクトリではなくここに置く。
@@ -313,7 +313,7 @@ tm — Tampermonkey ユーザースクリプト インストール CLI
 前提条件:
   Tampermonkey 拡張の設定で「ファイル URL へのアクセスを許可」を有効化してください。
 
-詳細: https://github.com/m-mahiro/tempermonkey-cli
+詳細: https://github.com/m-mahiro/tampermonkey-cli
     `);
     process.exit(0);
   }
